@@ -1,0 +1,46 @@
+{
+    // Press F5 (or Run > Start Debugging) and pick a configuration.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "GUI: random + example",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "args": ["--players", "r", "e", "--gui", "--seed", "4444", "-J", "20"],
+            "justMyCode": true
+        },
+        {
+            "name": "GUI: all 10 groups",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "args": ["--players", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "--gui", "--seed", "4444"],
+            "justMyCode": true
+        },
+        {
+            "name": "Headless: all groups, 20 years",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "args": ["--players", "r", "e", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "-T", "7200", "--seed", "4444"],
+            "justMyCode": true
+        },
+        {
+            "name": "GUI: fixed map",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "args": ["--players", "e", "--map_path", "maps/template/classic.json", "--gui", "--seed", "1"],
+            "justMyCode": true
+        }
+    ]
+}

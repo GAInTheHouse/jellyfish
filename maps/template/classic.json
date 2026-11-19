@@ -1,0 +1,11 @@
+{
+    "feeding": [250, 250],
+    "breeding": [750, 700],
+    "predator": [520, 480],
+    "currents": {
+        "surface": 135,
+        "shallow": 315,
+        "medium": 45,
+        "deep": 225
+    }
+}

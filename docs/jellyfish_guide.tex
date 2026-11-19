@@ -1,0 +1,325 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codebg}{gray}{0.96}
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{gray!40},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray!70!black},
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+}
+\setlist{itemsep=2pt, topsep=4pt}
+
+\title{Project 4: Jellyfish\\[4pt] \large Simulator Guide for Students}
+\author{COMS 4444}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+% =====================================================================
+\section{How to code your jellyfish}
+
+\subsection{Step by step}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Open your group's file.} Each group owns one file, for
+  example \texttt{players/group4/player.py}. It already contains a class
+  (\texttt{Player4}) with one method to fill in:
+\begin{lstlisting}
+def act(self, snapshot: JellyfishSnapshot) -> Action:
+    return Action(depth=snapshot.depth)
+\end{lstlisting}
+
+  \item \textbf{Understand when \texttt{act} runs.} Every day, the
+  simulator calls \texttt{act} once for each living jellyfish in your
+  group. Your job is to answer one question: \emph{which depth should this
+  jellyfish ride today?}
+
+  \item \textbf{Read what the jellyfish can sense.} The \texttt{snapshot}
+  holds everything the jellyfish is allowed to know (see
+  Section~\ref{sec:senses}). It does \textbf{not} know its $(x, y)$
+  position or where any zone is. Navigating without that is the puzzle.
+
+  \item \textbf{Remember things using memory.}
+  \texttt{snapshot.memory} is a small array of bytes (8 by default, set
+  with \texttt{-M}). Each byte holds a value from 0 to 255. Change it
+  directly:
+\begin{lstlisting}
+snapshot.memory[0] = 5          # write
+count = snapshot.memory[1]      # read
+\end{lstlisting}
+  This is the jellyfish's \textbf{only} memory. Do not store anything on
+  \texttt{self} or in global variables between calls; the simulator does
+  not even tell you which jellyfish is calling. You may not change the
+  length of the memory. Offspring receive a copy of their parent's memory.
+
+  \item \textbf{Return an action.}
+\begin{lstlisting}
+return Action(Depth.DEEP)
+\end{lstlisting}
+  Eating and reproducing happen automatically whenever the jellyfish is in
+  the right zone in the right season, so depth is the only real decision.
+  You can switch either off with \texttt{Action(depth, eat=False)} or
+  \texttt{Action(depth, reproduce=False)}.
+
+  \item \textbf{Use the provided randomness.} If you want random choices,
+  use \texttt{self.rng} (a seeded \texttt{random.Random}) rather than
+  Python's \texttt{random} module. Then the same seed always reproduces
+  the same run.
+
+  \item \textbf{Run and watch.}
+\begin{lstlisting}[language=bash]
+uv run main.py --players 4 --gui
+uv run main.py --players 4 r e --gui   # compare with the baselines
+\end{lstlisting}
+  In VS Code you can also press F5 and pick a launch configuration.
+\end{enumerate}
+
+\subsection{A complete small example}
+
+\begin{lstlisting}
+from core.action import Action
+from core.depth import Depth
+from core.player import Player
+from core.seasons import Season
+from core.snapshot import JellyfishSnapshot
+
+
+class Player4(Player):
+    def act(self, s: JellyfishSnapshot) -> Action:
+        if s.in_predator_zone:
+            return Action(Depth.SURFACE)   # escape fast
+        if s.in_feeding_zone and s.season == Season.SUMMER:
+            return Action(Depth.DEEP)      # stay put and eat
+        return Action(Depth.SHALLOW)       # otherwise drift
+\end{lstlisting}
+
+\subsection{Other things your class can use}
+
+\begin{tabular}{@{}ll@{}}
+\toprule
+\texttt{self.memory\_size}   & number of bytes in \texttt{snapshot.memory} \\
+\texttt{self.lifetime\_days} & $S \times 360$, the fixed lifespan of every jellyfish \\
+\texttt{self.rng}            & seeded random number generator \\
+\bottomrule
+\end{tabular}
+
+\medskip
+You may add more files inside your own group folder.
+
+% =====================================================================
+\section{What a jellyfish senses}
+\label{sec:senses}
+
+\begin{tabular}{@{}p{0.42\textwidth}p{0.52\textwidth}@{}}
+\toprule
+\textbf{Field} & \textbf{Meaning} \\
+\midrule
+\texttt{day\_of\_year}, \texttt{year}, \texttt{season} & calendar (days 1--360; seasons spring, summer, fall, winter) \\
+\texttt{birth\_day\_of\_year}, \texttt{birth\_year} & when this jellyfish was born \\
+\texttt{age\_days} & convenience: days since birth \\
+\texttt{depth} & its current depth \\
+\texttt{heading}, \texttt{speed}, \texttt{velocity} & the current \emph{at its current depth} (see below) \\
+\texttt{in\_feeding\_zone} & is it in the feeding zone? \\
+\texttt{in\_breeding\_zone} & is it in the breeding zone? \\
+\texttt{in\_predator\_zone} & is it in the predator zone? \\
+\texttt{reproduction\_capacity} & offspring still allowed this winter \\
+\texttt{memory} & its memory (a \texttt{bytearray}); mutate in place \\
+\bottomrule
+\end{tabular}
+
+\subsection{Does it know the currents at the other depths?}
+
+\textbf{Speeds: yes. Directions: no.}
+
+\begin{itemize}[leftmargin=*]
+  \item The \textbf{speeds} are fixed rules of the game, the same in every
+  run: surface 40, shallow 20, medium 10 and deep 5~km/day. Your code can
+  look them up at any time, e.g.\ \texttt{Depth.SURFACE.speed}.
+  \item The \textbf{direction} of each current is chosen at random for
+  every run. The snapshot only reports the current at the jellyfish's
+  \emph{own} depth: its compass \texttt{heading} (0 = north, 90 = east),
+  its \texttt{speed}, and its \texttt{velocity} as $(dx, dy)$ in km/day
+  ($x$ grows east, $y$ grows south).
+  \item To learn the direction at another depth, a jellyfish has to go
+  there: next day the snapshot reports that depth's current. If you want
+  to remember what you learned, you must store it in memory (for example,
+  one byte per depth holding the heading divided by 360 and scaled to
+  0--255). Since offspring inherit memory, knowledge can pass down the
+  generations.
+\end{itemize}
+
+% =====================================================================
+\section{The built-in players}
+
+Three kinds of player ship with the simulator so you have something to
+compare against. Select them with \texttt{-{}-players}.
+
+\subsection{Random player (\texttt{r})}
+Every day it picks one of the four depths uniformly at random (using
+\texttt{self.rng}). It ignores the snapshot and never uses memory.
+Its jellyfish wander aimlessly; this is the baseline to beat.
+
+\subsection{Example player (\texttt{e})}
+A short, readable strategy that uses only \textbf{one byte} of memory.
+It checks these rules in order:
+\begin{enumerate}[leftmargin=*]
+  \item In the predator zone: ride the surface current (fastest) to get
+  out quickly.
+  \item In the feeding zone during summer: go deep (slowest current) to
+  stay inside the zone and keep eating.
+  \item In the breeding zone during winter with capacity left: go deep to
+  stay and keep spawning.
+  \item Otherwise \textbf{explore}: ride one current for 30 days, then
+  pick a new random depth.
+\end{enumerate}
+To remember its exploration plan it packs two numbers into
+\texttt{memory[0]}:
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+bits 7--6 & exploration depth & 0--3 \\
+bits 5--0 & days left on this leg & 0--63 \\
+\bottomrule
+\end{tabular}
+\end{center}
+It is not meant to be good; it shows how to read the snapshot and how to
+pack information tightly into memory.
+
+\subsection{Group stubs (\texttt{1}--\texttt{10})}
+Until you change it, your player returns \texttt{Action(snapshot.depth)}:
+it stays at its current depth forever. Jellyfish start at the surface, so
+a stub drifts in a straight line at 40~km/day, wrapping around the ocean.
+
+% =====================================================================
+\section{Core features of the simulator}
+
+\subsection{The world}
+\begin{itemize}[leftmargin=*]
+  \item A $1000 \times 1000$~km ocean that wraps around at every edge
+  (a torus): leaving the right edge brings you back on the left, and
+  leaving the top brings you back at the bottom.
+  \item Three circular zones of radius 200~km: \textbf{feeding},
+  \textbf{breeding} and \textbf{predator}. Feeding and breeding never
+  overlap; the predator zone may overlap either.
+  \item Four currents, one per depth, each with a fixed speed and a
+  random direction per run.
+  \item A 360-day year with four 90-day seasons: spring (days 1--90),
+  summer (91--180), fall (181--270) and winter (271--360).
+\end{itemize}
+
+\subsection{What happens each day}
+For every living jellyfish, in this order:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Old age.} It dies once it has lived $S \times 360$ days.
+  \item \textbf{Sensing.} Zone membership is checked at its position at
+  the start of the day.
+  \item \textbf{Predation.} If it starts the day in the predator zone, it
+  is eaten with probability 5\%.
+  \item \textbf{Decision.} The simulator calls your \texttt{act()}.
+  \item \textbf{Eating.} In the feeding zone during summer, it eats. Its
+  first 30 eating days (possibly spread over several summers) only grow
+  it. After that, each eating day counts toward offspring.
+  \item \textbf{Reproducing.} In the breeding zone during winter, with
+  capacity left, it produces \emph{one} offspring at its location. The
+  offspring copies the parent's memory and acts from the next day.
+  \item \textbf{Drifting.} It moves to the chosen depth and drifts with
+  that current for the day.
+\end{enumerate}
+
+On the first day of fall (day 181), each jellyfish's capacity is set to
+\[
+  \mbox{capacity} = \left\lfloor \frac{\mbox{eating days counted last summer}}{10} \right\rfloor
+\]
+and the counter resets. So reproduction always depends on the \emph{previous}
+summer only.
+
+\subsection{Start of a run}
+$J$ jellyfish per group (set with \texttt{-J}) are born on day 1 of
+year 1 at random spots in the breeding zone, at the surface, with memory
+set to all zeros. Every group gets the same starting spots.
+
+\subsection{Many groups in one ocean}
+\texttt{-{}-players 1 2 3 \dots{} 10} runs every group in the same ocean at
+the same time. Groups never interact, and each group has its own
+predation dice, so one group's luck cannot affect another's. If one
+group's code raises an error, returns something that is not an
+\texttt{Action}, or changes the memory length, only that group stops; the
+run continues for everyone else.
+
+\subsection{Settings}
+
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Flag} & \textbf{Default} & \textbf{Meaning} \\
+\midrule
+\texttt{-{}-players} & \texttt{r} & \texttt{r} random, \texttt{e} example, \texttt{1}--\texttt{10} groups \\
+\texttt{-{}-gui} & off & open the visualizer \\
+\texttt{-{}-seed} & from clock & zones, current directions, predation, \texttt{self.rng} \\
+\texttt{-T} & 3600 & days to simulate (360 days = 1 year) \\
+\texttt{-M} & 8 & memory size in bytes (1--1024) \\
+\texttt{-S} & 3 & lifetime in years (may be fractional) \\
+\texttt{-J} & 10 & jellyfish each group starts with \\
+\texttt{-{}-max\_population} & 2000 & per-group cap; extra births are skipped \\
+\texttt{-{}-map\_path} & none & JSON file in \texttt{maps/} fixing zones and/or currents \\
+\texttt{-{}-json} & off & print results as JSON only \\
+\bottomrule
+\end{tabular}
+
+\subsection{Two ways to run}
+\paragraph{Headless.} Prints a results table per group: final and peak
+population, births, deaths from predators and from old age, the day the
+group first reached $10J$ and $100J$, and how much time its code used.
+
+\paragraph{GUI.} Shows the ocean with all three zones (feeding = solid
+outline, breeding = dashed outline, predators = hatched) and the
+jellyfish moving on it, coloured by group and drawn smaller the deeper
+they are. The side panel has a season bar, a compass of the four
+currents, a live population table and a population-over-time chart.
+Eaten jellyfish play a short death animation.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Key} & \textbf{Action} \\
+\midrule
+\texttt{SPACE} & play / pause \\
+$\rightarrow$ & advance one day \\
+$\uparrow$ / $\downarrow$ & faster / slower \\
+\texttt{L} & show one depth at a time \\
+\texttt{T} & toggle trails \\
+\texttt{G} & linear / log population chart \\
+\texttt{1}--\texttt{9}, \texttt{0} & show / hide groups 1--10 \\
+click & inspect a jellyfish (memory, age, eating counters) \\
+\texttt{H} / \texttt{ESC} & help / quit \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Code quality}
+Pull requests must pass Ruff and the tests:
+\begin{lstlisting}[language=bash]
+uv run ruff format
+uv run ruff check --fix
+uv run python -m pytest
+\end{lstlisting}
+
+\end{document}
