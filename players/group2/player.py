@@ -14,5 +14,4 @@ class Player2(Player):
     """
 
     def act(self, snapshot: JellyfishSnapshot) -> Action:
-        # TODO(group 2): replace this. For now: stay at the current depth.
         return Action(depth=snapshot.depth)
