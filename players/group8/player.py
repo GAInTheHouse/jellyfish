@@ -1,13 +1,11 @@
 import random
+from itertools import combinations, product
+from math import atan2, cos, radians, sin, tau
 
-from core import snapshot, current
+from core.action import Action
 from core.depth import Depth
 from core.player import Player
-from core.action import Action
 from core.seasons import Season
-from math import cos, radians, sin
-from math import atan2, cos, sin, tau
-from itertools import combinations, product
 from core.snapshot import JellyfishSnapshot
 
 
@@ -21,7 +19,9 @@ class Player8(Player):
     Do not keep per-jellyfish state on `self`: memory is the only memory.
     """
 
-    def __init__(self, memory_size: int, lifetime_days: int, rng: random.Random) -> None:
+    def __init__(
+        self, memory_size: int, lifetime_days: int, rng: random.Random
+    ) -> None:
         super().__init__(memory_size, lifetime_days, rng)
         self.current_speeds = [40, 20, 10, 5]
         self.first_k_days = 4
@@ -133,7 +133,6 @@ class Player8(Player):
             s.memory[2] = 1 + (round(s.heading * 255 / 360) % 255)
         if s.depth == Depth.DEEP:
             s.memory[3] = 1 + (round(s.heading * 255 / 360) % 255)
-        return None
 
     @staticmethod
     def update_position(s: JellyfishSnapshot):
@@ -168,9 +167,16 @@ class Player8(Player):
             angle = radians((s.memory[slot] - 1) * 360 / 255)
             velocities[depth] = (depth.speed * sin(angle), -depth.speed * cos(angle))
         # Fastest pairs first, using the faster depth as the first leg.
-        pairs = list(combinations(
-            sorted(velocities, key=lambda current_depth: current_depth.speed, reverse=True), 2
-        ))
+        pairs = list(
+            combinations(
+                sorted(
+                    velocities,
+                    key=lambda current_depth: current_depth.speed,
+                    reverse=True,
+                ),
+                2,
+            )
+        )
 
         visited = 1
         targets = []
@@ -216,7 +222,9 @@ class Player8(Player):
                     return first if best_route[0] > 0 else second
         return None
 
-    def stay_put(self, s: JellyfishSnapshot, x: float, y: float, zone_flag: int) -> Action:
+    def stay_put(
+        self, s: JellyfishSnapshot, x: float, y: float, zone_flag: int
+    ) -> Action:
         target = self.estimate_zone_center(s.memory, zone_flag)
         if target is None:
             return Action(Depth.DEEP)
@@ -243,7 +251,9 @@ class Player8(Player):
         angle = atan2(sum(sin(a) for a in angles), sum(cos(a) for a in angles))
         return (angle * 1000 / tau) % 1000
 
-    def estimate_zone_center(self, memory: bytearray, zone_flag: int) -> tuple[float, float] | None:
+    def estimate_zone_center(
+        self, memory: bytearray, zone_flag: int
+    ) -> tuple[float, float] | None:
         xs, ys = [], []
         for cell, flags in enumerate(memory[8:108]):
             if flags & zone_flag:
@@ -255,15 +265,20 @@ class Player8(Player):
         return self.wrapped_mean(xs), self.wrapped_mean(ys)
 
     def best_next_depth(
-            self, velocities: dict[Depth, tuple[float, float]],
-            x: float, y: float, target: tuple[float, float]
-        ) -> Depth:
+        self,
+        velocities: dict[Depth, tuple[float, float]],
+        x: float,
+        y: float,
+        target: tuple[float, float],
+    ) -> Depth:
         target_x, target_y = target
+
         def distance_after_move(depth: Depth) -> float:
             vx, vy = velocities[depth]
             dx = self.wrapped_delta(x + vx, target_x)
             dy = self.wrapped_delta(y + vy, target_y)
             return dx * dx + dy * dy
+
         return min(velocities, key=distance_after_move)
 
     @staticmethod
@@ -288,7 +303,9 @@ class Player8(Player):
         velocities[s.depth] = s.velocity
         return velocities
 
-    def depth_toward(self, s: JellyfishSnapshot, x: float, y: float, target: tuple[float, float]) -> Depth:
+    def depth_toward(
+        self, s: JellyfishSnapshot, x: float, y: float, target: tuple[float, float]
+    ) -> Depth:
         velocities = self.current_velocities(s)
         dx = self.wrapped_delta(x, target[0])
         dy = self.wrapped_delta(y, target[1])
@@ -317,7 +334,7 @@ class Player8(Player):
                 error_y = a * ay + b * by - ty
                 error_squared = error_x * error_x + error_y * error_y
                 score = (a + b, error_squared)
-                if error_squared <= 20 ** 2 and score < best_score:
+                if error_squared <= 20**2 and score < best_score:
                     best_score = score
                     best_depth = first if a > 0 else second
 
