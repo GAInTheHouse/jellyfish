@@ -296,9 +296,22 @@ def follow_plan(state: JellyfishMemory) -> Depth:
 
 
 def plan_travel_to(state: JellyfishMemory, destination: Point):
-    """Travel plan from the current position, or None if nothing gets there."""
+    """Travel plan from the current position, or None if nothing gets there.
+
+    Routes through the predator zone are avoided when its center is known.
+    """
     displacement = navigation.torus_displacement(state.position, destination)
-    return navigation.plan_travel(displacement, current_velocities(state))
+    return navigation.plan_travel(
+        displacement, current_velocities(state), predator_center_offset(state)
+    )
+
+
+def predator_center_offset(state: JellyfishMemory) -> Point | None:
+    """Predator zone center relative to our position, once it is known."""
+    predator_zone = state.zones[ZoneIndex.PREDATOR]
+    if not predator_zone.center_known:
+        return None
+    return navigation.torus_displacement(state.position, predator_zone.center)
 
 
 def begin_travel(

@@ -153,6 +153,50 @@ def test_plan_travel_impossible_returns_none():
     assert navigation.plan_travel((0.0, 123.0), velocities) is None
 
 
+def test_count_days_in_zone_counts_daily_positions():
+    velocities = velocities_for_headings([90, 0, 180, 270])
+    # 10 days east at 40 km/day; zone centered 200 km east: days 1..10 -> 40..400.
+    plan = [10, 0, 0, 0]
+    assert navigation.count_days_in_zone(plan, velocities, (200.0, 0.0)) == 10
+    assert navigation.count_days_in_zone(plan, velocities, (200.0, 300.0)) == 0
+    # The zone is also met through the torus wrap.
+    assert navigation.count_days_in_zone(plan, velocities, (-800.0, 0.0)) == 10
+
+
+def test_plan_travel_detours_around_predator_zone():
+    velocities = velocities_for_headings([90, 270, 0, 180])
+    destination = (450.0, 0.0)
+    predator_offset = (200.0, 0.0)  # squarely on the direct route
+
+    direct_plan = navigation.plan_travel(destination, velocities)
+    assert navigation.count_days_in_zone(direct_plan, velocities, predator_offset) > 0
+
+    safe_plan = navigation.plan_travel(destination, velocities, predator_offset)
+    assert navigation.count_days_in_zone(safe_plan, velocities, predator_offset) == 0
+    assert navigation.plan_total_days(safe_plan) > navigation.plan_total_days(
+        direct_plan
+    )
+    reached = navigation.wrap_point(
+        navigation.plan_net_displacement(safe_plan, velocities)
+    )
+    assert navigation.torus_distance(reached, destination) <= 20.0
+
+
+def test_plan_travel_keeps_fastest_route_when_predator_is_out_of_the_way():
+    velocities = velocities_for_headings([90, 270, 0, 180])
+    destination = (400.0, 0.0)
+    assert navigation.plan_travel(
+        destination, velocities, (0.0, 450.0)
+    ) == navigation.plan_travel(destination, velocities)
+
+
+def test_plan_travel_minimizes_predator_days_when_unavoidable():
+    # Destination inside the predator zone: no route is clean, still returns one.
+    velocities = velocities_for_headings([90, 270, 0, 180])
+    plan = navigation.plan_travel((400.0, 0.0), velocities, (400.0, 0.0))
+    assert plan is not None and navigation.plan_total_days(plan) > 0
+
+
 # ------------------------------------------------------------ loiter planning
 def test_plan_loiter_respects_limits_and_beats_single_deep_day():
     rng = random.Random(7)

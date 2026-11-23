@@ -216,17 +216,17 @@ def _solve_two_current_days(
     return (max(first_days, 0.0), max(second_days, 0.0))
 
 
-def _fewest_days_fractional_plan(
+def _fractional_plan_candidates(
     displacement: Point, velocities: list[Point], image_range: int
-) -> tuple[list[float], Point] | None:
-    """Best fractional plan over all torus images of the destination.
+) -> list[tuple[list[float], Point]]:
+    """Every two-current way to reach any torus image of the destination.
 
-    The least-days linear program has an optimum using at most two currents,
-    so it is enough to enumerate pairs of currents. Returns the fractional
-    days per depth and the (unwrapped) displacement it achieves.
+    For one image, the least-days linear program has an optimum using at most
+    two currents, so pairs of currents are all that need enumerating. Each
+    candidate is (fractional days per depth, unwrapped displacement), and the
+    list is sorted from fewest to most total days.
     """
-    best_total_days = float("inf")
-    best: tuple[list[float], Point] | None = None
+    candidates: list[tuple[list[float], Point]] = []
     image_offsets = range(-image_range, image_range + 1)
     for horizontal_wraps in image_offsets:
         for vertical_wraps in image_offsets:
@@ -241,14 +241,57 @@ def _fewest_days_fractional_plan(
                         velocities[second_depth],
                         image_displacement,
                     )
-                    if solution is None or sum(solution) >= best_total_days:
+                    if solution is None:
                         continue
-                    best_total_days = sum(solution)
                     fractional_days = [0.0] * NUMBER_OF_DEPTHS
                     fractional_days[first_depth] = solution[0]
                     fractional_days[second_depth] = solution[1]
-                    best = (fractional_days, image_displacement)
-    return best
+                    candidates.append((fractional_days, image_displacement))
+    candidates.sort(key=lambda candidate: sum(candidate[0]))
+    return candidates
+
+
+def count_days_in_zone(
+    plan: MovementPlan,
+    velocities: list[Point],
+    zone_center_offset: Point,
+    radius: float = ZONE_RADIUS,
+) -> int:
+    """Days of a plan that start inside a zone (the engine senses once a day).
+
+    `zone_center_offset` is the zone center relative to where the plan starts.
+    The starting day itself is not counted: no plan can change it.
+    """
+    days_in_zone = 0
+    position = (0.0, 0.0)
+    for leg_days, velocity in zip(plan, velocities):
+        for _ in range(leg_days):
+            position = add_vectors(position, velocity)
+            if torus_distance(position, zone_center_offset) <= radius:
+                days_in_zone += 1
+    return days_in_zone
+
+
+def _safest_then_fastest_candidate(
+    candidates: list[tuple[list[float], Point]],
+    velocities: list[Point],
+    predator_center_offset: Point | None,
+) -> tuple[list[float], Point]:
+    """Candidate with the fewest predator-zone days; ties go to the fastest."""
+    if predator_center_offset is None:
+        return candidates[0]
+    best_candidate = candidates[0]
+    fewest_predator_days: int | None = None
+    for candidate in candidates:  # already sorted fastest first
+        rounded_plan = [round(days) for days in candidate[0]]
+        predator_days = count_days_in_zone(
+            rounded_plan, velocities, predator_center_offset
+        )
+        if fewest_predator_days is None or predator_days < fewest_predator_days:
+            fewest_predator_days, best_candidate = predator_days, candidate
+        if predator_days == 0:
+            break  # fastest fully safe route: nothing later can beat it
+    return best_candidate
 
 
 def _reduce_rounding_error(
@@ -276,22 +319,29 @@ def _reduce_rounding_error(
     return plan
 
 
-def plan_travel(displacement: Point, velocities: list[Point]) -> MovementPlan | None:
-    """Whole-day plan that covers `displacement` in (nearly) the fewest days.
+def plan_travel(
+    displacement: Point,
+    velocities: list[Point],
+    predator_center_offset: Point | None = None,
+) -> MovementPlan | None:
+    """Whole-day plan that covers `displacement`, safest route first.
 
+    Among the routes to every torus image of the destination, prefer the one
+    spending the fewest days in the predator zone (when its center, given
+    relative to the start, is known), then the one taking the fewest days.
     Returns None when no combination of currents can reach any torus image of
     the destination (currents all but parallel).
     """
-    fractional = _fewest_days_fractional_plan(
+    candidates = _fractional_plan_candidates(
         displacement, velocities, TORUS_IMAGE_RANGE
+    ) or _fractional_plan_candidates(
+        displacement, velocities, FALLBACK_TORUS_IMAGE_RANGE
     )
-    if fractional is None:
-        fractional = _fewest_days_fractional_plan(
-            displacement, velocities, FALLBACK_TORUS_IMAGE_RANGE
-        )
-    if fractional is None:
+    if not candidates:
         return None
-    fractional_days, image_displacement = fractional
+    fractional_days, image_displacement = _safest_then_fastest_candidate(
+        candidates, velocities, predator_center_offset
+    )
     rounded_plan = [round(days) for days in fractional_days]
     return _reduce_rounding_error(rounded_plan, velocities, image_displacement)
 
