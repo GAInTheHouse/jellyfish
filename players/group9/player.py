@@ -132,6 +132,66 @@ def memory_offsets(memory: bytearray):
             PRED_2_Y: 8,  # Up to here is 194 bytes
             HISTORY: -1,  # Use the rest
         }
+    elif size >= 102:
+        sizes = {
+            METADATA: 1,
+            POS_X: 8,
+            POS_Y: 8,
+            CURR_SURFACE: 4,
+            CURR_SHALLOW: 4,
+            CURR_MEDIUM: 4,
+            CURR_DEEP: 4,
+            METADATA_ZONES: 1,
+            CENTER_BREED_X: 4,
+            CENTER_BREED_Y: 4,
+            CENTER_FEED_X: 4,
+            CENTER_FEED_Y: 4,
+            CENTER_PRED_X: 4,
+            CENTER_PRED_Y: 4,
+            BREED_1_X: 4,
+            BREED_1_Y: 4,
+            BREED_2_X: 4,
+            BREED_2_Y: 4,
+            FEED_1_X: 4,
+            FEED_1_Y: 4,
+            FEED_2_X: 4,
+            FEED_2_Y: 4,
+            PRED_1_X: 4,
+            PRED_1_Y: 4,
+            PRED_2_X: 4,
+            PRED_2_Y: 4,  # Up to here is 102 bytes
+            HISTORY: -1,  # Use the rest
+        }
+    # elif size >= 52: # Does not work. B/c of precision or bug in code? Who knows
+    #     sizes = {
+    #         METADATA: 1,
+    #         POS_X: 4,
+    #         POS_Y: 4,
+    #         CURR_SURFACE: 2,
+    #         CURR_SHALLOW: 2,
+    #         CURR_MEDIUM: 2,
+    #         CURR_DEEP: 2,
+    #         METADATA_ZONES: 1,
+    #         CENTER_BREED_X: 2,
+    #         CENTER_BREED_Y: 2,
+    #         CENTER_FEED_X: 2,
+    #         CENTER_FEED_Y: 2,
+    #         CENTER_PRED_X: 2,
+    #         CENTER_PRED_Y: 2,
+    #         BREED_1_X: 2,
+    #         BREED_1_Y: 2,
+    #         BREED_2_X: 2,
+    #         BREED_2_Y: 2,
+    #         FEED_1_X: 2,
+    #         FEED_1_Y: 2,
+    #         FEED_2_X: 2,
+    #         FEED_2_Y: 2,
+    #         PRED_1_X: 2,
+    #         PRED_1_Y: 2,
+    #         PRED_2_X: 2,
+    #         PRED_2_Y: 2,  # Up to here is 52 bytes
+    #         HISTORY: -1,  # Use the rest
+    #     }
     else:
         return {}
 
@@ -224,13 +284,26 @@ def navigation(snapshot: JellyfishSnapshot, curr_pos: tuple[float, float]) -> Ac
 
 
 def fit_circle(points):
-    # Give us numpy please b/c this is soooo slow. Could do coarse to fine, but if we are given numpy anyway then no point
-
+    # Coarse search
     best_center = (0, 0)
     best_residual = math.inf
-    for x in range(1000):
-        for y in range(1000):
+    for x in range(0, 1000, 10):
+        for y in range(0, 1000, 10):
             center = (x, y)
+            residual = 0
+            for p in points:
+                residual += abs(torus_distance(center, p) - 200)
+
+            if residual < best_residual:
+                best_center = center
+                best_residual = residual
+
+    # Fine search
+    best_x = best_center[0]
+    best_y = best_center[1]
+    for x in range(best_x - 10, best_x + 10):
+        for y in range(best_y - 10, best_y + 10):
+            center = (x if x >= 0 else x + 1000, y if y >= 0 else y + 1000)
             residual = 0
             for p in points:
                 residual += abs(torus_distance(center, p) - 200)
