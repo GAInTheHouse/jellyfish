@@ -10,6 +10,7 @@ Conventions:
 from __future__ import annotations
 
 from functools import lru_cache
+from itertools import product
 from math import ceil, cos, hypot, pi, sin, sqrt
 
 from core import constants
@@ -26,11 +27,13 @@ HEADING_STEPS_PER_CIRCLE = 1 << 16
 
 # Zone center estimation.
 MINIMUM_USABLE_CHORD_KM = 60.0  # shorter chords are too sensitive to error
+# Mirror candidates this close to the chord midpoint are treated as one point.
+NEGLIGIBLE_MIRROR_OFFSET_KM = 20.0
 
 # Travel planning.
 TORUS_IMAGE_RANGE = 1  # 3x3 copies of the destination
 FALLBACK_TORUS_IMAGE_RANGE = 3  # wider search when currents are near-degenerate
-MAXIMUM_ROUNDING_FIX_STEPS = 16
+MAXIMUM_ROUNDING_FIX_STEPS = 4
 NEGATIVE_DAYS_TOLERANCE = 1e-9
 
 # Loiter planning.
@@ -111,13 +114,17 @@ def estimate_zone_center(
     first_inward_direction: Point,
     second_border_point: Point,
     second_inward_direction: Point,
+    known_interior_points: tuple[Point, ...] = (),
     radius: float = ZONE_RADIUS,
 ) -> Point | None:
     """Center of the circle through two border points, or None if unusable.
 
     The two points form a chord; the center lies on its perpendicular bisector
-    at distance sqrt(r^2 - half_chord^2) from the midpoint. Of the two mirror
-    candidates, keep the one the inward directions point toward.
+    at distance sqrt(r^2 - half_chord^2) from the midpoint, on either side.
+    The true center must lie on the inward side of both crossings and within
+    one radius of every known interior point. The estimate is only returned
+    when exactly one of the two mirror candidates passes (a straight pass
+    through the zone cannot tell them apart).
     """
     # Unwrap the second point next to the first so the chord is a plain vector.
     chord = torus_displacement(first_border_point, second_border_point)
@@ -131,28 +138,39 @@ def estimate_zone_center(
         first_border_point[0] + chord[0] / 2,
         first_border_point[1] + chord[1] / 2,
     )
+    if midpoint_to_center <= NEGLIGIBLE_MIRROR_OFFSET_KM:
+        return wrap_point(midpoint)  # near-diameter chord: candidates coincide
+
     chord_normal = (-chord[1] / chord_length, chord[0] / chord_length)
-    second_point_unwrapped = add_vectors(first_border_point, chord)
+    crossings = (
+        (first_border_point, first_inward_direction),
+        (second_border_point, second_inward_direction),
+    )
 
-    def inward_agreement(candidate_center: Point) -> float:
-        """Sum of (center - border point) . inward direction over both points."""
-        agreement = 0.0
-        for border_point, direction in (
-            (first_border_point, first_inward_direction),
-            (second_point_unwrapped, second_inward_direction),
-        ):
-            agreement += (candidate_center[0] - border_point[0]) * direction[0]
-            agreement += (candidate_center[1] - border_point[1]) * direction[1]
-        return agreement
-
-    candidate_centers = [
-        (
-            midpoint[0] + side * midpoint_to_center * chord_normal[0],
-            midpoint[1] + side * midpoint_to_center * chord_normal[1],
+    def is_consistent(candidate_center: Point) -> bool:
+        for border_point, inward in crossings:
+            to_center = torus_displacement(border_point, candidate_center)
+            if to_center[0] * inward[0] + to_center[1] * inward[1] <= 0:
+                return False
+        return all(
+            torus_distance(interior_point, candidate_center) <= radius
+            for interior_point in known_interior_points
         )
-        for side in (1.0, -1.0)
+
+    consistent_centers = [
+        candidate_center
+        for candidate_center in (
+            wrap_point(
+                (
+                    midpoint[0] + side * midpoint_to_center * chord_normal[0],
+                    midpoint[1] + side * midpoint_to_center * chord_normal[1],
+                )
+            )
+            for side in (1.0, -1.0)
+        )
+        if is_consistent(candidate_center)
     ]
-    return wrap_point(max(candidate_centers, key=inward_agreement))
+    return consistent_centers[0] if len(consistent_centers) == 1 else None
 
 
 # ------------------------------------------------------------ movement plans
@@ -236,31 +254,25 @@ def _fewest_days_fractional_plan(
 def _reduce_rounding_error(
     plan: MovementPlan, velocities: list[Point], displacement: Point
 ) -> MovementPlan:
-    """Greedily add / remove single days while that brings the plan closer."""
+    """Nudge every leg by -1 / 0 / +1 day (jointly) while the plan gets closer."""
     plan = list(plan)
     achieved = plan_net_displacement(plan, velocities)
     residual = (displacement[0] - achieved[0], displacement[1] - achieved[1])
     for _ in range(MAXIMUM_ROUNDING_FIX_STEPS):
         best_error = hypot(*residual)
-        best_change: tuple[int, int] | None = None
-        for depth_index, velocity in enumerate(velocities):
-            for day_change in (1, -1):
-                if plan[depth_index] + day_change < 0:
-                    continue
-                error = hypot(
-                    residual[0] - day_change * velocity[0],
-                    residual[1] - day_change * velocity[1],
-                )
-                if error < best_error - 1e-9:
-                    best_error, best_change = error, (depth_index, day_change)
-        if best_change is None:
+        best_changes: tuple[int, ...] | None = None
+        for day_changes in product((-1, 0, 1), repeat=NUMBER_OF_DEPTHS):
+            if any(days + change < 0 for days, change in zip(plan, day_changes)):
+                continue
+            shift = plan_net_displacement(list(day_changes), velocities)
+            error = hypot(residual[0] - shift[0], residual[1] - shift[1])
+            if error < best_error - 1e-9:
+                best_error, best_changes = error, day_changes
+        if best_changes is None:
             break
-        depth_index, day_change = best_change
-        plan[depth_index] += day_change
-        residual = (
-            residual[0] - day_change * velocities[depth_index][0],
-            residual[1] - day_change * velocities[depth_index][1],
-        )
+        plan = [days + change for days, change in zip(plan, best_changes)]
+        shift = plan_net_displacement(list(best_changes), velocities)
+        residual = (residual[0] - shift[0], residual[1] - shift[1])
     return plan
 
 

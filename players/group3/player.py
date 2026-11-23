@@ -15,6 +15,7 @@ from core.seasons import Season
 from core.snapshot import JellyfishSnapshot
 from players.group3 import navigation
 from players.group3.memory import (
+    MAXIMUM_INTERIOR_POINTS_PER_ZONE,
     JellyfishMemory,
     Mode,
     Point,
@@ -37,6 +38,10 @@ MAXIMUM_MODE_TRANSITIONS_PER_DAY = 6
 LAST_DAY_OF_WINTER = constants.DAYS_PER_YEAR
 START_POSITION: Point = (0.0, 0.0)  # every stored position is relative to it
 FALLBACK_DEPTH = Depth.DEEP
+# Interior points are only remembered when this far from the stored ones.
+MINIMUM_INTERIOR_POINT_SPACING_KM = 40.0
+# A stored center this inconsistent with what we sense is thrown away.
+CENTER_CONTRADICTION_TOLERANCE_KM = 60.0
 
 
 class Player3(Player):
@@ -87,6 +92,7 @@ def update_knowledge(state: JellyfishMemory, snapshot: JellyfishSnapshot) -> Non
         )
         record_zone_border_crossings(state, snapshot)
 
+    review_zone_knowledge(state, snapshot)
     record_current_heading(state, snapshot)
     record_feeding_entry_point(state, snapshot)
     count_eating_day(state, snapshot)
@@ -159,13 +165,19 @@ def record_zone_border_crossings(
         zone = state.zones[zone_index]
         if is_inside != zone.was_inside_yesterday and not zone.center_known:
             record_border_crossing(
-                zone, state.position, snapshot.velocity, is_entry=is_inside
+                zone,
+                state.position,
+                snapshot.velocity,
+                is_entry=is_inside,
             )
         zone.was_inside_yesterday = is_inside
 
 
 def record_border_crossing(
-    zone: ZoneKnowledge, position: Point, velocity: Point, is_entry: bool
+    zone: ZoneKnowledge,
+    position: Point,
+    velocity: Point,
+    is_entry: bool,
 ) -> None:
     """Pair this crossing with the stored one; otherwise keep it for later."""
     border_point = navigation.approximate_border_point(position, velocity)
@@ -177,17 +189,58 @@ def record_border_crossing(
             ),
             border_point,
             navigation.inward_direction(velocity, is_entry),
+            tuple(zone.interior_points),
         )
         if estimated_center is not None:
             zone.center_known = True
             zone.center = estimated_center
             zone.border_crossing_known = False
             return
-    # No partner yet, or the chord was too short: keep the latest crossing.
+    # No partner yet, or the pair was unusable: keep the latest crossing.
     zone.border_crossing_known = True
     zone.border_crossing_is_entry = is_entry
     zone.border_crossing_point = border_point
     zone.border_crossing_velocity = velocity
+
+
+def review_zone_knowledge(state: JellyfishMemory, snapshot: JellyfishSnapshot) -> None:
+    """Daily upkeep per zone: collect interior points, drop disproven centers."""
+    for zone_index, is_inside in sensed_zone_membership(snapshot).items():
+        zone = state.zones[zone_index]
+        if zone.center_known:
+            discard_center_if_contradicted(zone, state.position, is_inside)
+        elif is_inside:
+            remember_interior_point(zone, state.position)
+
+
+def remember_interior_point(zone: ZoneKnowledge, position: Point) -> None:
+    """Keep a handful of well-separated positions known to be inside the zone."""
+    if len(zone.interior_points) >= MAXIMUM_INTERIOR_POINTS_PER_ZONE:
+        return
+    is_far_from_stored_points = all(
+        navigation.torus_distance(position, stored_point)
+        >= MINIMUM_INTERIOR_POINT_SPACING_KM
+        for stored_point in zone.interior_points
+    )
+    if is_far_from_stored_points:
+        zone.interior_points.append(position)
+
+
+def discard_center_if_contradicted(
+    zone: ZoneKnowledge, position: Point, is_inside: bool
+) -> None:
+    """Forget a center estimate that clearly disagrees with today's sensing."""
+    distance_from_center = navigation.torus_distance(position, zone.center)
+    tolerance = CENTER_CONTRADICTION_TOLERANCE_KM
+    is_contradicted = (
+        distance_from_center > navigation.ZONE_RADIUS + tolerance
+        if is_inside
+        else distance_from_center < navigation.ZONE_RADIUS - tolerance
+    )
+    if is_contradicted:
+        zone.center_known = False
+        zone.border_crossing_known = False
+        zone.interior_points = [position] if is_inside else []
 
 
 def best_known_zone_point(

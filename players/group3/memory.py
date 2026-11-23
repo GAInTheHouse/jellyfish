@@ -16,6 +16,7 @@ from functools import cache
 
 NUMBER_OF_DEPTHS = 4
 HEADING_STEPS_PER_CIRCLE = 1 << 16  # headings are stored as uint16 steps
+MAXIMUM_INTERIOR_POINTS_PER_ZONE = 6
 
 Point = tuple[float, float]
 
@@ -52,6 +53,9 @@ class ZoneKnowledge:
     border_crossing_is_entry: bool = False
     border_crossing_point: Point = (0.0, 0.0)
     border_crossing_velocity: Point = (0.0, 0.0)
+    # A few spread-out positions sensed inside the zone. They tell the two
+    # mirror-image center candidates of a chord apart.
+    interior_points: list[Point] = field(default_factory=list)
 
 
 @dataclass
@@ -122,7 +126,8 @@ def choose_field_formats(memory_size: int) -> FieldFormats:
 
 
 FLAG_COUNT = 2 + NUMBER_OF_DEPTHS + 4 * len(ZoneIndex) + 1
-POINTS_PER_ZONE = 3  # center, border crossing point, border crossing velocity
+# center, border crossing point, border crossing velocity, interior points
+POINTS_PER_ZONE = 3 + MAXIMUM_INTERIOR_POINTS_PER_ZONE
 
 
 @cache
@@ -134,6 +139,7 @@ def _build_struct(formats: FieldFormats) -> struct.Struct:
     layout += formats.coordinate * 2  # position
     layout += formats.heading * NUMBER_OF_DEPTHS
     layout += formats.coordinate * (2 * POINTS_PER_ZONE * len(ZoneIndex))
+    layout += formats.small_integer * len(ZoneIndex)  # interior point counts
     layout += formats.coordinate * 2  # feeding_entry_point
     layout += formats.day_count * NUMBER_OF_DEPTHS  # plan_days_per_depth
     layout += formats.day_count  # current_day_in_plan
@@ -184,6 +190,12 @@ def _flatten_values(state: JellyfishMemory) -> list[int | float]:
         values += zone.center
         values += zone.border_crossing_point
         values += zone.border_crossing_velocity
+        stored_points = zone.interior_points[:MAXIMUM_INTERIOR_POINTS_PER_ZONE]
+        unused_slots = MAXIMUM_INTERIOR_POINTS_PER_ZONE - len(stored_points)
+        for interior_point in stored_points + [(0.0, 0.0)] * unused_slots:
+            values += interior_point
+    for zone in state.zones:
+        values.append(min(len(zone.interior_points), MAXIMUM_INTERIOR_POINTS_PER_ZONE))
     values += state.feeding_entry_point
     values += [_clamp_day_count(days) for days in state.plan_days_per_depth]
     values.append(_clamp_day_count(state.current_day_in_plan))
@@ -222,6 +234,12 @@ def _restore_values(values: tuple[int | float, ...]) -> JellyfishMemory:
         zone.center = take_point()
         zone.border_crossing_point = take_point()
         zone.border_crossing_velocity = take_point()
+        zone.interior_points = [
+            take_point() for _ in range(MAXIMUM_INTERIOR_POINTS_PER_ZONE)
+        ]
+    for zone in state.zones:
+        interior_point_count = int(next(remaining))
+        zone.interior_points = zone.interior_points[:interior_point_count]
 
     state.feeding_entry_point_known = next(flags)
     state.feeding_entry_point = take_point()
