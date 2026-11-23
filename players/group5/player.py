@@ -71,9 +71,13 @@ def _correct_center(x: float, y: float, inside: bool) -> Point:
     if distance == 0 or inside == (distance <= _RADIUS):
         return x, y
     # Inside puts the center within one radius; outside puts it farther away.
-    # Limit a single correction to six cells because the bearing is approximate.
-    correction = max(-6.0, min(6.0, _RADIUS - distance))
-    scale = 1 + correction / distance
+    correction = _RADIUS - distance
+    if abs(correction) <= 6:
+        edge = _RADIUS / distance
+        stored_distance = hypot(round(x * edge), round(y * edge))
+        if inside != (stored_distance <= _RADIUS):
+            correction += -1 if inside else 1  # Cross the boundary after byte rounding.
+    scale = 1 + max(-6.0, min(6.0, correction)) / distance
     return x * scale, y * scale
 
 
@@ -110,7 +114,8 @@ class Player5(Player):
             return self._simple(s, breeding, inside)
 
         headings = _observe_currents(s)
-        self._update_map(s)
+        site = _NURSERY if breeding else _FOOD
+        self._update_map(s, site)
         danger = _read_site(s.memory, _DANGER)
         if s.in_predator_zone:
             return Action(self._escape(headings, danger))
@@ -119,7 +124,6 @@ class Player5(Player):
         if 0 in headings:
             return Action(Depth(headings.index(0)))
         currents = tuple(_DRIFT[d][headings[d]] for d in _DEPTHS)
-        site = _NURSERY if breeding else _FOOD
         center = _read_site(s.memory, site)
         if center is None:
             return self._explore(s)
@@ -127,10 +131,6 @@ class Player5(Player):
         goal = self._safe_side(center, danger)
         if inside:
             return Action(self._hold(goal, danger, currents))
-        if _distance_sq(center, 0, 0) <= 4:
-            # Our estimated center led to open water. Replace it on the next sighting.
-            s.memory[site] = s.memory[site + 1] = 0
-            return self._explore(s)
         if _distance_sq(goal, 0, 0) <= 4:
             goal = center  # The estimated safe side was just outside the patch.
         goal = self._detour(goal, danger)
@@ -179,7 +179,7 @@ class Player5(Player):
         right = (_wrap(hx + dy * offset), _wrap(hy - dx * offset))
         return min((left, right), key=lambda p: p[0] * p[0] + p[1] * p[1])
 
-    def _update_map(self, s: JellyfishSnapshot) -> None:
+    def _update_map(self, s: JellyfishSnapshot, target: int) -> None:
         # A baby starts where its parent spawned, before the parent's drift.
         first_turn = s.age_days == 0 or (
             s.age_days == 1 and (s.birth_year, s.birth_day_of_year) != (1, 1)
@@ -203,6 +203,10 @@ class Player5(Player):
             if first_turn:
                 continue  # The parent already recorded this observation at the birth site.
             x, y = _wrap(old[0] - step_x), _wrap(old[1] - step_y)
+            if not inside and site in (target, _DANGER) and x * x + y * y <= 4:
+                # Check arrival before correction. Keep off-season sites for later visits.
+                s.memory[site] = s.memory[site + 1] = 0
+                continue
             if (
                 inside
                 and site != _DANGER
